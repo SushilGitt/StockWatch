@@ -73,6 +73,50 @@ dbConn();
 // If you are adding routes outside of the /api path, remember to
 // also add a proxy rule for them in web/frontend/vite.config.js
 
+// TEMP diagnostic (remove after debugging the 403). Not behind auth so it can
+// be hit directly. Uses the stored offline token to make a raw Admin GraphQL
+// call and returns Shopify's exact response + the token's granted scopes.
+app.get("/diag-gql", async (req, res) => {
+  try {
+    const shop = req.query.shop;
+    if (!shop) return res.status(400).json({ error: "pass ?shop=" });
+    const sessions = await shopify.config.sessionStorage.findSessionsByShop(shop);
+    if (!sessions || !sessions.length)
+      return res.status(404).json({ error: "no session for shop", shop });
+    const session = sessions[0];
+    const apiVersion = shopify.api.config.apiVersion;
+    const url = `https://${shop}/admin/api/${apiVersion}/graphql.json`;
+    const r = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": session.accessToken,
+      },
+      body: JSON.stringify({ query: "{ shop { name myshopifyDomain } }" }),
+    });
+    const text = await r.text();
+    return res.status(200).json({
+      requestedUrl: url,
+      configuredApiVersion: apiVersion,
+      sessionScope: session.scope,
+      sessionIsOnline: session.isOnline,
+      tokenPrefix: (session.accessToken || "").slice(0, 10),
+      shopifyStatus: r.status,
+      shopifyStatusText: r.statusText,
+      shopifyHeaders: {
+        "x-request-id": r.headers.get("x-request-id"),
+        "x-shopify-api-version": r.headers.get("x-shopify-api-version"),
+        "www-authenticate": r.headers.get("www-authenticate"),
+        server: r.headers.get("server"),
+        "content-type": r.headers.get("content-type"),
+      },
+      shopifyBody: text.slice(0, 2000),
+    });
+  } catch (e) {
+    return res.status(500).json({ error: e.message, stack: e.stack });
+  }
+});
+
 app.use("/api/*", shopify.validateAuthenticatedSession());
 
 app.use(express.json());
