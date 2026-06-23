@@ -4,6 +4,7 @@ import { readFileSync } from "fs";
 import express from "express";
 import serveStatic from "serve-static";
 
+import { RequestedTokenType } from "@shopify/shopify-api";
 import shopify from "./shopify.js";
 import dbConn from "./utils/DB.config.js";
 import PrivacyWebhookHandlers from "./privacy.js";
@@ -117,7 +118,54 @@ app.get("/diag-gql", async (req, res) => {
   }
 });
 
-app.use("/api/*", shopify.validateAuthenticatedSession());
+// Authenticate every /api/* request via TOKEN EXCHANGE (expiring offline
+// tokens). Shopify no longer accepts the non-expiring tokens that the legacy
+// OAuth code-grant flow produced, and shopify-app-express 5.0.20 only does
+// code-grant — so we run token exchange ourselves with @shopify/shopify-api.
+const authViaTokenExchange = async (req, res, next) => {
+  try {
+    const match = (req.headers.authorization || "").match(/^Bearer (.+)$/);
+    if (!match) {
+      res.status(401);
+      res.set("X-Shopify-Retry-Invalid-Session-Request", "1");
+      return res.end();
+    }
+    const sessionToken = match[1];
+    const payload = await shopify.api.session.decodeSessionToken(sessionToken);
+    const shop = payload.dest.replace(/^https?:\/\//, "");
+
+    const offlineId = shopify.api.session.getOfflineId(shop);
+    let session = await shopify.config.sessionStorage.loadSession(offlineId);
+
+    // Reuse only a valid, *expiring* token that hasn't expired. Otherwise
+    // (missing / expired / a legacy non-expiring token with no `expires`),
+    // exchange a fresh one.
+    const reusable =
+      session?.accessToken &&
+      session.expires &&
+      new Date(session.expires).getTime() > Date.now() + 10000;
+
+    if (!reusable) {
+      const result = await shopify.api.auth.tokenExchange({
+        shop,
+        sessionToken,
+        requestedTokenType: RequestedTokenType.OfflineAccessToken,
+      });
+      session = result.session;
+      await shopify.config.sessionStorage.storeSession(session);
+    }
+
+    res.locals.shopify = { session };
+    next();
+  } catch (e) {
+    console.error("Auth (token exchange) failed:", e?.message || e);
+    res.status(401);
+    res.set("X-Shopify-Retry-Invalid-Session-Request", "1");
+    return res.end();
+  }
+};
+
+app.use("/api/*", authViaTokenExchange);
 
 app.use(express.json());
 app.use("/api/", storeRouter)
@@ -127,7 +175,11 @@ app.use("/api/", paymentRouter)
 app.use(shopify.cspHeaders());
 app.use(serveStatic(STATIC_PATH, { index: false }));
 
-app.use("/*", shopify.ensureInstalledOnShop(), async (_req, res, _next) => {
+// Serve the embedded app shell directly. With token exchange the client (App
+// Bridge) authenticates via session tokens, so there's no server-side OAuth
+// install gate here — the merchant consent is handled by Shopify's managed
+// install before the app ever loads.
+app.use("/*", async (_req, res, _next) => {
   return res
     .status(200)
     .set("Content-Type", "text/html")
