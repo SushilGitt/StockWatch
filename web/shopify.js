@@ -36,6 +36,13 @@ const shopify = shopifyApp({
   },
   // This should be replaced with your preferred storage strategy
   sessionStorage: new SQLiteSessionStorage(DB_PATH),
+  // Use token exchange instead of the legacy OAuth code-grant flow. Shopify no
+  // longer accepts the non-expiring offline tokens produced by code-grant; token
+  // exchange issues expiring offline tokens (requires App Bridge in the frontend,
+  // which is already loaded).
+  future: {
+    unstable_newEmbeddedAuthStrategy: true,
+  },
 });
 
 export default shopify;
