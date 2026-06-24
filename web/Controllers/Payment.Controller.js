@@ -36,12 +36,14 @@ export const getPayment = async (req, res) => {
 
 // Plan configuration for the Billing API. Edit these to change the plan.
 const PLAN_NAME = "Premium Plan";
-const PLAN_PRICE = 15;            // amount per interval
+const PLAN_PRICE = 9;             // amount per interval (USD/month)
 const PLAN_CURRENCY = "USD";
 const PLAN_INTERVAL = "EVERY_30_DAYS"; // monthly recurring
 // test: true => Shopify never charges real money (always test charges, even on
-// live stores). Set to false to bill for real in production.
-const BILLING_TEST = true;
+// live stores). Defaults to test mode for safety; set the env var
+// BILLING_TEST=false in production to bill merchants for real.
+// (Dev/test stores are always billed as test regardless of this flag.)
+const BILLING_TEST = process.env.BILLING_TEST !== "false";
 
 export const createSubscription = async (req, res) => {
     try {
