@@ -1,0 +1,39 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "c2314d06751c451468eaf7a9d5ca3554"
+name = "Stock Watch"
+application_url = "https://y5eouzz5aiyq2z5cjykz5gtd.91.239.208.85.sslip.io"
+embedded = true
+
+[webhooks]
+api_version = "2026-07"
+
+  [[webhooks.subscriptions]]
+  compliance_topics = [ "customers/data_request" ]
+  uri = "https://y5eouzz5aiyq2z5cjykz5gtd.91.239.208.85.sslip.io/api/webhooks"
+
+  [[webhooks.subscriptions]]
+  compliance_topics = [ "customers/redact" ]
+  uri = "https://y5eouzz5aiyq2z5cjykz5gtd.91.239.208.85.sslip.io/api/webhooks"
+
+  [[webhooks.subscriptions]]
+  compliance_topics = [ "shop/redact" ]
+  uri = "https://y5eouzz5aiyq2z5cjykz5gtd.91.239.208.85.sslip.io/api/webhooks"
+
+  [[webhooks.subscriptions]]
+  topics = [ "inventory_levels/update" ]
+  uri = "https://y5eouzz5aiyq2z5cjykz5gtd.91.239.208.85.sslip.io/api/webhooks"
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_inventory,read_products"
+
+[auth]
+redirect_urls = [
+  "https://y5eouzz5aiyq2z5cjykz5gtd.91.239.208.85.sslip.io/api/auth/callback",
+  "https://y5eouzz5aiyq2z5cjykz5gtd.91.239.208.85.sslip.io/auth/callback",
+  "https://y5eouzz5aiyq2z5cjykz5gtd.91.239.208.85.sslip.io/auth/shopify/callback"
+]
+
+[build]
+automatically_update_urls_on_dev = true
