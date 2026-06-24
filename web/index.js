@@ -4,7 +4,7 @@ import { readFileSync } from "fs";
 import express from "express";
 import serveStatic from "serve-static";
 
-import { RequestedTokenType } from "@shopify/shopify-api";
+import { Session } from "@shopify/shopify-api";
 import shopify from "./shopify.js";
 import dbConn from "./utils/DB.config.js";
 import PrivacyWebhookHandlers from "./privacy.js";
@@ -118,10 +118,56 @@ app.get("/diag-gql", async (req, res) => {
   }
 });
 
+// Exchange an App Bridge session token for an EXPIRING offline access token.
+//
+// We POST the token-exchange grant ourselves instead of using
+// shopify.api.auth.tokenExchange(), because @shopify/shopify-api@11.14.1 does
+// NOT send `expiring=1`. Without that flag Shopify returns a legacy
+// non-expiring offline token, which the Admin API now rejects with
+// 403 "Non-expiring access tokens are no longer accepted". With `expiring=1`
+// we get an expiring offline token (≈60 min) plus a refresh token.
+// Docs: https://shopify.dev/docs/apps/build/authentication-authorization/access-tokens/offline-access-tokens
+const exchangeExpiringOfflineToken = async (shop, sessionToken) => {
+  const resp = await fetch(`https://${shop}/admin/oauth/access_token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      client_id: shopify.api.config.apiKey,
+      client_secret: shopify.api.config.apiSecretKey,
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      subject_token: sessionToken,
+      subject_token_type: "urn:ietf:params:oauth:token-type:id_token",
+      requested_token_type:
+        "urn:shopify:params:oauth:token-type:offline-access-token",
+      expiring: 1,
+    }),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(
+      `token exchange failed (${resp.status}): ${text.slice(0, 500)}`
+    );
+  }
+
+  const data = await resp.json();
+  return new Session({
+    id: shopify.api.session.getOfflineId(shop),
+    shop,
+    state: "",
+    isOnline: false,
+    accessToken: data.access_token,
+    scope: data.scope,
+    ...(data.expires_in && {
+      expires: new Date(Date.now() + data.expires_in * 1000),
+    }),
+  });
+};
+
 // Authenticate every /api/* request via TOKEN EXCHANGE (expiring offline
 // tokens). Shopify no longer accepts the non-expiring tokens that the legacy
 // OAuth code-grant flow produced, and shopify-app-express 5.0.20 only does
-// code-grant — so we run token exchange ourselves with @shopify/shopify-api.
+// code-grant — so we run token exchange ourselves (see helper above).
 const authViaTokenExchange = async (req, res, next) => {
   try {
     const match = (req.headers.authorization || "").match(/^Bearer (.+)$/);
@@ -146,12 +192,7 @@ const authViaTokenExchange = async (req, res, next) => {
       new Date(session.expires).getTime() > Date.now() + 10000;
 
     if (!reusable) {
-      const result = await shopify.api.auth.tokenExchange({
-        shop,
-        sessionToken,
-        requestedTokenType: RequestedTokenType.OfflineAccessToken,
-      });
-      session = result.session;
+      session = await exchangeExpiringOfflineToken(shop, sessionToken);
       await shopify.config.sessionStorage.storeSession(session);
     }
 
