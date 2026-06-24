@@ -118,6 +118,79 @@ app.get("/diag-gql", async (req, res) => {
   }
 });
 
+// TEMP diagnostic for the low-stock email alert pipeline (remove after fixing).
+// ?shop=<shop>.myshopify.com  — reports the stored session, the Admin webhook
+// subscriptions Shopify has registered, and the threshold doc for the shop.
+// Add &testEmail=1 to actually send a test alert to the threshold's email.
+app.get("/diag-alert", async (req, res) => {
+  const out = {};
+  try {
+    const shop = req.query.shop;
+    if (!shop) return res.status(400).json({ error: "pass ?shop=" });
+
+    const offlineId = shopify.api.session.getOfflineId(shop);
+    const session = await shopify.config.sessionStorage.loadSession(offlineId);
+    out.session = session
+      ? {
+          scope: session.scope,
+          isOnline: session.isOnline,
+          expires: session.expires || null,
+          expired: session.expires
+            ? new Date(session.expires).getTime() < Date.now()
+            : null,
+          tokenPrefix: (session.accessToken || "").slice(0, 10),
+        }
+      : null;
+
+    if (session?.accessToken) {
+      const apiVersion = shopify.api.config.apiVersion;
+      const r = await fetch(
+        `https://${shop}/admin/api/${apiVersion}/graphql.json`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Shopify-Access-Token": session.accessToken,
+          },
+          body: JSON.stringify({
+            query: `{
+              webhookSubscriptions(first: 25) {
+                edges { node {
+                  topic
+                  endpoint { __typename ... on WebhookHttpEndpoint { callbackUrl } }
+                } }
+              }
+            }`,
+          }),
+        }
+      );
+      out.webhooksStatus = r.status;
+      out.webhooks = await r.json();
+    }
+
+    const ThresholdModel = (await import("./Models/Threshold.Model.js")).default;
+    out.thresholdForShop = await ThresholdModel.findOne({ domain: shop });
+    out.allThresholds = await ThresholdModel.find({}).lean();
+
+    if (req.query.testEmail) {
+      const sendThresholdAlert = (await import("./Middlewares/Email.js")).default;
+      const to = out.thresholdForShop?.email || req.query.to;
+      if (to) {
+        await sendThresholdAlert(to, "DIAG TEST PRODUCT", 0, shop.split(".")[0], "0");
+        out.testEmailSentTo = to;
+      } else {
+        out.testEmailSentTo = "no email on file (pass &to=you@example.com)";
+      }
+    }
+
+    return res.status(200).json(out);
+  } catch (e) {
+    out.error = e.message;
+    out.stack = e.stack;
+    return res.status(500).json(out);
+  }
+});
+
 // Exchange an App Bridge session token for an EXPIRING offline access token.
 //
 // We POST the token-exchange grant ourselves instead of using
