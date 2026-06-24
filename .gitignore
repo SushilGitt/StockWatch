@@ -1,6 +1,8 @@
 # Environment Configuration
 .env
 .env.*
+# ...but keep the documented template (no real secrets) in git
+!.env.example
 
 # Dependency directory
 node_modules
