@@ -35,11 +35,11 @@ const PLAN_NAME = "Premium Plan";
 const PLAN_PRICE = 9;             // amount per interval (USD/month)
 const PLAN_CURRENCY = "USD";
 const PLAN_INTERVAL = "EVERY_30_DAYS"; // monthly recurring
-// test: true => Shopify never charges real money (always test charges, even on
-// live stores). Defaults to test mode for safety; set the env var
-// BILLING_TEST=false in production to bill merchants for real.
-// (Dev/test stores are always billed as test regardless of this flag.)
-const BILLING_TEST = process.env.BILLING_TEST !== "false";
+// Billing mode. Real charges by default (production). Set BILLING_TEST=true to
+// force Shopify TEST charges (no real money) even on a live store — useful for
+// staging. Dev/test stores are ALWAYS billed as test by Shopify regardless of
+// this flag, so defaulting to real-by-default is safe.
+const BILLING_TEST = process.env.BILLING_TEST === "true";
 
 export const createSubscription = async (req, res) => {
     try {
